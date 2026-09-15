@@ -10,6 +10,7 @@ queue_rules:
   - name: default
     batch_size: 1
     queue_conditions: []
-    merge_conditions: []
+    merge_conditions:
+      - check-success = vm6-codeowners-hold-never-20260916
     max_checks_retries: 0
     merge_method: merge
