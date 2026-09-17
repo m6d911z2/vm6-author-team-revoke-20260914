@@ -1,0 +1,1 @@
+protected-main same-base harmless companion
