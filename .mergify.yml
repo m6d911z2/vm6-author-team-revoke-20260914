@@ -4,12 +4,18 @@ commands_restrictions:
     conditions:
       - sender-permission >= write
 merge_queue:
-  mode: serial
-  max_parallel_checks: 1
+  mode: parallel
+  max_parallel_checks: 2
+scopes:
+  source:
+    manual:
 queue_rules:
   - name: default
-    batch_size: 1
+    batch_size: 2
+    batch_max_wait_time: 5 minutes
+    batch_max_failure_resolution_attempts: 4
     queue_conditions: []
-    merge_conditions: []
+    merge_conditions:
+      - check-success = @github-actions/vm6-mq-failed-tests
     max_checks_retries: 0
     merge_method: merge

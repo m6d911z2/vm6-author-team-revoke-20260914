@@ -1,0 +1,101 @@
+name: CI
+on:
+  pull_request:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  test:
+    name: vm6-mq-failed-tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install the Mergify CLI
+        uses: Mergifyio/setup-cli@v1.3.0
+
+      - name: Read the merge queue metadata
+        id: queue-info
+        if: startsWith(github.event.pull_request.title, 'merge queue:')
+        continue-on-error: true
+        run: mergify ci queue-info
+
+      - name: Download the previously failed tests
+        id: failed-tests
+        if: steps.queue-info.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          QUEUE_METADATA: ${{ steps.queue-info.outputs.queue_metadata }}
+        shell: bash
+        run: |
+          fallback() { echo "$1, running the full queue test suite."; exit 0; }
+          sha=$(jq -r '.previous_failed_batches[-1].batch_pr_head_sha // empty' <<< "$QUEUE_METADATA")
+          [ -n "$sha" ] || fallback "No previous failed batch"
+          echo "VM6_PREVIOUS_FAILED_BATCH_SHA=$sha"
+          run_id=$(gh run list --commit "$sha" --workflow CI --json databaseId -q '.[0].databaseId // empty')
+          [ -n "$run_id" ] || fallback "No CI run for the previous failed batch"
+          echo "VM6_SELECTED_PARENT_RUN_ID=$run_id"
+          gh run download "$run_id" --name failed-tests --dir previous-failed-tests || fallback "No failed-tests artifact"
+          tests=$(paste -sd ' ' previous-failed-tests/failed-tests.txt)
+          echo "VM6_REUSED_TESTS=$tests"
+          echo "tests=$tests" >> "$GITHUB_OUTPUT"
+
+      - name: Run controlled tests
+        id: run-tests
+        env:
+          ONLY_TESTS: ${{ steps.failed-tests.outputs.tests }}
+          IS_QUEUE: ${{ startsWith(github.event.pull_request.title, 'merge queue:') }}
+          BASE_REF: ${{ github.base_ref }}
+        shell: python
+        run: |
+          import os
+          from pathlib import Path
+
+          only = os.environ.get("ONLY_TESTS", "").strip().split()
+          is_queue = os.environ.get("IS_QUEUE", "false").lower() == "true"
+          base_ref = os.environ.get("BASE_REF", "")
+          bad = Path("vm6-bad-marker.txt").exists()
+
+          if base_ref == "vm6-mq-poison-base-20260917" and not is_queue:
+              selected = ["test_safe"]
+              failures = ["test_safe"]
+              mode = "poison-context"
+          elif only:
+              selected = only
+              failures = [t for t in selected if t == "test_required" and is_queue and bad]
+              mode = "reused-parent-artifact"
+          elif is_queue:
+              selected = ["test_safe", "test_required"]
+              failures = [t for t in selected if t == "test_required" and bad]
+              mode = "full-queue-suite"
+          else:
+              selected = ["test_safe"]
+              failures = []
+              mode = "source-pr-smoke"
+
+          Path("failed-tests.txt").write_text("".join(f"{t}\n" for t in failures))
+          print(f"VM6_TEST_MODE={mode}")
+          print(f"VM6_BASE_REF={base_ref}")
+          print(f"VM6_BAD_MARKER={bad}")
+          print(f"VM6_SELECTED_TESTS={' '.join(selected)}")
+          print(f"VM6_FAILED_TESTS={' '.join(failures)}")
+          with open(os.environ["GITHUB_OUTPUT"], "a") as f:
+              f.write(f"should_fail={'true' if failures else 'false'}\n")
+
+      - name: Upload failed-tests artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: failed-tests
+          path: failed-tests.txt
+          if-no-files-found: error
+
+      - name: Hold initial failed queue batch for provenance race
+        if: steps.run-tests.outputs.should_fail == 'true' && startsWith(github.event.pull_request.title, 'merge queue:') && steps.failed-tests.outputs.tests == ''
+        run: |
+          echo "VM6_PARENT_FAILURE_HOLD=300"
+          sleep 300
+
+      - name: Fail when controlled tests failed
+        if: steps.run-tests.outputs.should_fail == 'true'
+        run: exit 1
