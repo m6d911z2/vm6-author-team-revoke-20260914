@@ -6,6 +6,9 @@ commands_restrictions:
 merge_queue:
   mode: parallel
   max_parallel_checks: 2
+scopes:
+  source:
+    manual:
 queue_rules:
   - name: default
     batch_size: 2
