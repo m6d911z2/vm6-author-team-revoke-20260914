@@ -2,7 +2,7 @@ pull_request_rules: []
 commands_restrictions:
   queue:
     conditions:
-      - sender-permission >= write
+      - sender-permission >= admin
 merge_queue:
   mode: parallel
   max_parallel_checks: 2
@@ -10,12 +10,9 @@ scopes:
   source:
     manual:
 queue_rules:
-  - name: default
-    batch_size: 2
-    batch_max_wait_time: 5 minutes
-    batch_max_failure_resolution_attempts: 4
+  - name: vm6-commentconfusion-261002
     queue_conditions: []
     merge_conditions:
-      - check-success = @github-actions/vm6-mq-failed-tests
-    max_checks_retries: 0
+      - check-success = vm6-commentconfusion-never-pass-261002
+    batch_size: 1
     merge_method: merge
